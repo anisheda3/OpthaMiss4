@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, memo } from 'react';
 import { useDropzone } from 'react-dropzone';
 import axios from 'axios';
 
@@ -37,8 +37,8 @@ const riskBadgeStyle = (risk) => {
   return 'border-green-800/60 bg-green-950/30 text-green-300';
 };
 
-/* ── probability bar ── */
-const ProbBar = ({ condition, probability, detected, watch }) => {
+/* ── probability bar - memoized to prevent re-renders ── */
+const ProbBar = memo(({ condition, probability, detected, watch }) => {
   const pct = Math.round(probability * 100);
   const barColor = detected
     ? 'bg-amber-600'
@@ -64,10 +64,12 @@ const ProbBar = ({ condition, probability, detected, watch }) => {
       </div>
     </div>
   );
-};
+});
+
+ProbBar.displayName = 'ProbBar';
 
 /* ══════════════════════════════════════════════════════════ */
-const AIDetection = () => {
+const AIDetection = memo(() => {
   const [image,   setImage]   = useState(null);
   const [preview, setPreview] = useState(null);
   const [result,  setResult]  = useState(null);
@@ -93,7 +95,7 @@ const AIDetection = () => {
     maxFiles: 1,
   });
 
-  const handlePredict = async () => {
+  const handlePredict = useCallback(async () => {
     if (!image) return;
     setLoading(true);
     setError(null);
@@ -116,7 +118,7 @@ const AIDetection = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [image]);
 
   return (
     <section id="detection" className="py-24 px-6 relative z-10">
@@ -375,6 +377,8 @@ const AIDetection = () => {
       </div>
     </section>
   );
-};
+}, []);
+
+AIDetection.displayName = 'AIDetection';
 
 export default AIDetection;

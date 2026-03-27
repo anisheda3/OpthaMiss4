@@ -2,6 +2,7 @@
 """
 OpthaMiss Backend — FastAPI server wrapping the MISS-EyeScreen model
 Render + Local compatible version
+OPTIMIZED VERSION
 """
 
 import os
@@ -11,6 +12,7 @@ import io
 import numpy as np
 from datetime import datetime
 from PIL import Image
+from functools import lru_cache
 
 # ── Memory & thread optimization for Render free tier ──
 os.environ['OMP_NUM_THREADS']               = '1'
@@ -25,7 +27,8 @@ import torch.nn as nn
 from torchvision import transforms
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import JSONResponse, Response
 
 # ── Check for OpenCV (optional for glare removal) ──
 try:
@@ -180,6 +183,24 @@ class FullModel(nn.Module):
 MODEL  = None
 DEVICE = None
 
+# Pre-compute transforms for reuse (avoid recreating on every request)
+_transform = None
+
+def get_transform():
+    """Get or create the image transform pipeline (cached)."""
+    global _transform
+    if _transform is None:
+        _transform = transforms.Compose([
+            transforms.Resize(
+                (224, 224),
+                interpolation=transforms.InterpolationMode.BICUBIC,
+            ),
+            transforms.ToTensor(),
+            transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
+        ])
+    return _transform
+
+
 def load_model():
     """Load the model and its checkpoint."""
     global MODEL, DEVICE
@@ -237,46 +258,64 @@ def load_model():
     for param in MODEL.parameters():
         param.requires_grad = False
 
+    # Warm up the model with a dummy input (improves first-request latency)
+    print("[INFO] Warming up model...")
+    dummy_input = torch.randn(1, 3, 224, 224).to(DEVICE)
+    with torch.no_grad():
+        _ = MODEL(dummy_input)
     print("[OK] Model ready")
 
 # ==============================================================================
-# Prediction Logic (with Test‑Time Augmentation)
+# Prediction Logic (with Test-Time Augmentation) - OPTIMIZED
 # ==============================================================================
+
+# Pre-compute flip indices for TTA (avoid recomputing on every request)
+_FLIP_H_IDX = None
+_FLIP_V_IDX = None
 
 def run_predict(pil_image: Image.Image):
     """
     Run inference on a PIL image.
     Returns: (probabilities array, binary predictions array)
-    Uses test‑time augmentation (3 flips) to improve robustness.
+    Uses test-time augmentation (3 flips) to improve robustness.
+    OPTIMIZED: Reuses transform, pre-computed flip indices.
     """
-    transform = transforms.Compose([
-        transforms.Resize(
-            (224, 224),
-            interpolation=transforms.InterpolationMode.BICUBIC,
-        ),
-        transforms.ToTensor(),
-        transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
-    ])
-
+    global _FLIP_H_IDX, _FLIP_V_IDX
+    
+    # Lazy init flip indices
+    if _FLIP_H_IDX is None:
+        _FLIP_H_IDX = torch.arange(223, -1, -1).long()
+    if _FLIP_V_IDX is None:
+        _FLIP_V_IDX = torch.arange(223, -1, -1).long()
+    
+    transform = get_transform()
+    
     img    = pil_image.convert('RGB')
     tensor = transform(img)                     # shape: [C, H, W]
 
-    # TTA: original, horizontal flip, vertical flip
-    tta_transforms = [
-        lambda x: x,                                 # original
-        lambda x: torch.flip(x, dims=[2]),           # horizontal flip (width)
-        lambda x: torch.flip(x, dims=[1]),           # vertical flip (height)
-    ]
-
     MODEL.eval()
     probs_list = []
+    
     with torch.no_grad():
-        for t_fn in tta_transforms:
-            # Apply transform, add batch dimension, move to device
-            input_tensor = t_fn(tensor).unsqueeze(0).to(DEVICE)
-            logits = MODEL(input_tensor)
-            probs  = torch.sigmoid(logits).cpu().numpy()[0]
-            probs_list.append(probs)
+        # Original
+        input_tensor = tensor.unsqueeze(0).to(DEVICE)
+        logits = MODEL(input_tensor)
+        probs  = torch.sigmoid(logits).cpu().numpy()[0]
+        probs_list.append(probs)
+        
+        # Horizontal flip (width dimension = 2)
+        h_flipped = tensor[:, :, _FLIP_H_IDX]
+        input_tensor = h_flipped.unsqueeze(0).to(DEVICE)
+        logits = MODEL(input_tensor)
+        probs  = torch.sigmoid(logits).cpu().numpy()[0]
+        probs_list.append(probs)
+        
+        # Vertical flip (height dimension = 1)
+        v_flipped = tensor[:, _FLIP_V_IDX, :]
+        input_tensor = v_flipped.unsqueeze(0).to(DEVICE)
+        logits = MODEL(input_tensor)
+        probs  = torch.sigmoid(logits).cpu().numpy()[0]
+        probs_list.append(probs)
 
     # Average probabilities across augmentations
     probs = np.mean(probs_list, axis=0)
@@ -284,9 +323,8 @@ def run_predict(pil_image: Image.Image):
     # Apply thresholds to get binary predictions
     preds = (probs >= DEFAULT_THRESHOLDS).astype(int)
 
-    # Free memory (optional, helps on low‑memory systems)
+    # Free memory
     del tensor, probs_list
-    torch.cuda.empty_cache() if torch.cuda.is_available() else None
 
     return probs, preds
 
@@ -299,6 +337,9 @@ app = FastAPI(
     description = "AI-powered anterior eye disease screening — 13 conditions",
     version     = "4.0.0",
 )
+
+# Add GZip compression middleware for faster responses
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 app.add_middleware(
     CORSMiddleware,

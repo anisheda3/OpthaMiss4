@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, memo } from 'react';
 
-const BackgroundEffects = () => {
+const BackgroundEffects = memo(() => {
   const [particles] = useState(() =>
     Array.from({ length: 50 }, (_, i) => ({
       id: i,
@@ -116,6 +116,8 @@ const BackgroundEffects = () => {
       />
     </div>
   );
-};
+}, []);
+
+BackgroundEffects.displayName = 'BackgroundEffects';
 
 export default BackgroundEffects;
