@@ -1,7 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, memo, useCallback } from 'react';
 
-const CinematicIntro = ({ onComplete }) => {
+const CinematicIntro = memo(({ onComplete }) => {
   const [stage, setStage] = useState(0);
+
+  const handleComplete = useCallback(() => {
+    if (onComplete) onComplete();
+  }, [onComplete]);
 
   useEffect(() => {
     const timers = [
@@ -9,10 +13,10 @@ const CinematicIntro = ({ onComplete }) => {
       setTimeout(() => setStage(2), 2200),
       setTimeout(() => setStage(3), 4000),
       setTimeout(() => setStage(4), 5800),
-      setTimeout(() => onComplete(), 6800),
+      setTimeout(handleComplete, 6800),
     ];
     return () => timers.forEach(clearTimeout);
-  }, [onComplete]);
+  }, [handleComplete]);
 
   const eyeOpenAmount = stage >= 1 ? 1 : 0;
   const isZooming = stage >= 3;
@@ -185,6 +189,8 @@ const CinematicIntro = ({ onComplete }) => {
       </div>
     </div>
   );
-};
+}, []);
+
+CinematicIntro.displayName = 'CinematicIntro';
 
 export default CinematicIntro;
