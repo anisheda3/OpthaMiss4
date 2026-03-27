@@ -80,17 +80,23 @@ _ABSOLUTE_PATH = r"C:\Users\Bhargav M\Downloads\OpthaMiss-main\experiments\miss_
 _ENV_PATH      = os.environ.get('MODEL_CHECKPOINT', '')
 _LOCAL_PATH    = 'experiments/miss_v4_refined/checkpoints/best.pth'
 _FALLBACK_PATH = 'best.pth'
+_DOCKER_PATH   = '/app/experiments/miss_v4_refined/checkpoints/best.pth'
+_RENDER_PATH   = '/opt/render/.local/lib/python3.10/site-packages/best.pth'
 
 if _ENV_PATH and os.path.exists(_ENV_PATH):
     CHECKPOINT_PATH = _ENV_PATH
 elif os.path.exists(_ABSOLUTE_PATH):
     CHECKPOINT_PATH = _ABSOLUTE_PATH
+elif os.path.exists(_DOCKER_PATH):
+    CHECKPOINT_PATH = _DOCKER_PATH
 elif os.path.exists(_LOCAL_PATH):
     CHECKPOINT_PATH = _LOCAL_PATH
 elif os.path.exists(_FALLBACK_PATH):
     CHECKPOINT_PATH = _FALLBACK_PATH
+elif os.path.exists(_RENDER_PATH):
+    CHECKPOINT_PATH = _RENDER_PATH
 else:
-    CHECKPOINT_PATH = _LOCAL_PATH   # will show warning at load time
+    CHECKPOINT_PATH = _FALLBACK_PATH   # will show warning at load time
 
 print(f"[INFO] Checkpoint path: {CHECKPOINT_PATH}")
 
